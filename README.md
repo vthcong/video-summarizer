@@ -144,24 +144,6 @@ uv run uvicorn app.main:app
 
 Then open http://localhost:8000. You can also bookmark a link like `http://localhost:8000/?url=<video-url>` to start a summary directly.
 
-## Troubleshooting
-
-**Start here:** when the button fails, it shows a red **!**. Hover over the button to read the error. Two logs have the details:
-- `~/Library/Logs/VideoSummarizer/host.log`: the launcher Chrome runs.
-- `logs/server.log` (in the project folder): the server.
-
-| Problem | Fix |
-| --- | --- |
-| "Specified native messaging host not found" | Run `uv run python launcher/install.py`, then reload the extension in `chrome://extensions`. |
-| "Native host has exited" | The launcher started but crashed. `host.log` shows why. Running `install.py` again regenerates the launcher. Make sure `uv sync` has created `.venv/`. |
-| "Port 8000 is already used by another program" | Stop whatever is using port 8000 (`lsof -i :8000` shows it). Or change `PORT` in `launcher/native_host.py`. |
-| "Claude Code error: Not logged in" | Run `claude` in a terminal and log in again. |
-| "Claude Code CLI not found" | Install Claude Code. If it's somewhere unusual, set `CLAUDE_BIN=/path/to/claude` in `.env`. |
-| The button stopped working after moving the project | Run `install.py` again; it records the project's location. |
-| Captions fail or YouTube blocks requests | YouTube changes often. Update the downloaders: `uv lock --upgrade-package yt-dlp --upgrade-package youtube-transcript-api && uv sync`. |
-| The first video without captions takes very long | The Whisper model is downloading (once). For faster transcription, set `WHISPER_MODEL=base`. |
-| "The summarizer server isn't running" on an old tab | The server stopped after 10 idle minutes. Click the extension button again. |
-
 ## Uninstall
 
 ```bash
@@ -169,31 +151,6 @@ uv run python launcher/install.py --uninstall
 ```
 
 Then remove the extension in `chrome://extensions` and delete the project folder. If you used Whisper, also delete its cached models in `~/.cache/huggingface/hub/models--Systran--faster-whisper-*`.
-
-## Project structure
-
-```
-app/
-  main.py          FastAPI server: API routes, background jobs, idle shutdown
-  youtube.py       URL → video ID, video info (yt-dlp)
-  transcript.py    captions, or audio download + Whisper transcription
-  summarizer.py    builds the prompt, calls Claude Code, validates the JSON result
-  models.py        data shapes shared by the server and the page
-  cache.py         one JSON file per video + language
-static/index.html  the whole web page (no build step)
-extension/         Chrome extension (Manifest V3): the toolbar button
-launcher/
-  native_host.py   started by Chrome; starts the server if needed
-  install.py       registers the launcher with Chrome
-tests/             unit tests (uv run pytest)
-```
-
-### Design notes
-
-- **Jobs and polling.** A summary runs as a background job, and the page asks for its status every 1.5 s. Transcribing a long video can take minutes, which a single web request would time out on.
-- **Timestamps in the prompt.** The transcript goes to Claude as ~30-second blocks, each starting with its timestamp. Chapters can therefore only point to moments that exist in the video.
-- **Structured output.** Claude's answer is constrained to a JSON schema generated from the same Pydantic model the code validates against.
-- **Native Messaging.** A Chrome extension can't start programs by itself. Native Messaging lets it run one program that you registered, and only this extension may run it. The extension's `manifest.json` contains a public `key`, so the extension ID is the same on every machine, and `install.py` can allow exactly that ID.
 
 ## Development
 
