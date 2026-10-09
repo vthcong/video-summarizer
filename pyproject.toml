@@ -1,0 +1,28 @@
+[project]
+name = "video-summarizer"
+version = "0.1.0"
+description = "Summarize YouTube videos with Claude"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "anthropic",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "python-dotenv",
+    "youtube-transcript-api>=1.0",
+    "yt-dlp",
+    "faster-whisper",
+    # faster-whisper 1.2.x passes av.open(metadata_errors=...), which newer PyAV removed.
+    "av<16",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv]
+package = false
+# Intel Macs: newer onnxruntime / ctranslate2 releases dropped macOS x86_64 wheels.
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'x86_64'"]

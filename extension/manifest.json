@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Video Summarizer",
+  "version": "1.0.0",
+  "description": "Summarize the YouTube video you're watching with your local Video Summarizer.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApifGqZcjSj+8UetvKpG5Gz4xdLACfC/sSrrIJ0ilQpww7iOxnX9HX4jOXY+uj18Fh7sV1z2W4rhVKZVTMWN9nPvk7X4MgKRKcVfaDQ4oif7khc1azfE1hTGOSp3huulGRhgI6fGsaQtFz9Y0ThTvofHPWkY0vCIHBbigeGiJIXz77rwPcHmcoDnxHwUrIxosK9Da68F2Hm3Ds7C1vGVsGV2vEwLPpDy7Kd5ns58fFHrjZRwgpii7Ug/CdFeMM8y+iohE7nRGuD7LQvEqfBi4zmYDyvmqEeMM8BYqI8kU/Vg3LryZu8EUREqIPzwmiwRjt+wwA2NM9T/hsZ4MXOACIQIDAQAB",
+  "permissions": ["nativeMessaging", "activeTab"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Summarize this video",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Summarizer</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
+    --border: #e3e3de; --accent: #c4302b; --accent-text: #ffffff; --error: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --surface: #1f1f1d; --text: #ecece8; --muted: #9a9a94;
+      --border: #33332f; --accent: #e5534b; --accent-text: #ffffff; --error: #f97066;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display: grid; gap: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .options { display: flex; gap: 12px; flex-wrap: wrap; }
+  .options label { display: grid; gap: 4px; flex: 1 1 150px; font-size: .8rem; color: var(--muted); }
+  .hint { margin: -4px 0 0; font-size: .8rem; color: var(--muted); }
+  input, select, button {
+    font: inherit; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); padding: 10px 12px;
+  }
+  input { flex: 1 1 320px; min-width: 0; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .6; cursor: default; }
+  #status { margin: 20px 0; color: var(--muted); min-height: 1.5em; }
+  #status.error { color: var(--error); }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px;
+    border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 16px; }
+  .video { display: flex; gap: 16px; align-items: center; }
+  .video img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+  .video h2 { font-size: 1.15rem; margin: 0 0 4px; }
+  .video a { color: inherit; text-decoration: none; }
+  .meta { color: var(--muted); font-size: .9rem; }
+  h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  ul { margin: 0; padding-left: 20px; }
+  li + li { margin-top: 6px; }
+  .chapter { display: grid; grid-template-columns: 72px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .chapter:first-of-type { border-top: 0; padding-top: 0; }
+  .chapter a.ts { color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 600; text-decoration: none; }
+  .chapter strong { display: block; }
+  .chapter p { margin: 2px 0 0; color: var(--muted); }
+  .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  @media (max-width: 520px) {
+    .video { flex-direction: column; align-items: flex-start; }
+    .video img { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Video Summarizer</h1>
+  <p class="sub">Paste a YouTube link to get a TL;DR, key points, and chapters.</p>
+
+  <form id="form">
+    <div class="row">
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=…" required autofocus>
+      <button class="primary" id="submit" type="submit">Summarize</button>
+    </div>
+    <div class="options">
+      <label>Language
+        <select id="language">
+          <option>English</option>
+          <option>Vietnamese</option>
+          <option value="auto">Same as video</option>
+          <option>Spanish</option>
+          <option>French</option>
+          <option>German</option>
+          <option>Japanese</option>
+          <option>Korean</option>
+          <option>Chinese</option>
+        </select>
+      </label>
+      <label>Model
+        <select id="model">
+          <option value="opus">Opus — most thorough</option>
+          <option value="sonnet" selected>Sonnet — balanced</option>
+          <option value="haiku">Haiku — fastest</option>
+        </select>
+      </label>
+      <label>Effort
+        <select id="effort">
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high" selected>High</option>
+          <option value="xhigh">Extra high</option>
+          <option value="max">Max</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint">Higher effort and larger models give more thorough summaries but take longer and use more of your Claude plan.</p>
+  </form>
+
+  <div id="status"></div>
+  <div id="result"></div>
+</main>
+
+<script>
+const STATUS_TEXT = {
+  queued: "Starting…",
+  fetching_transcript: "Fetching captions…",
+  downloading_audio: "No captions found — downloading audio…",
+  transcribing: "Transcribing audio (this can take a few minutes for long videos)…",
+  summarizing: "Summarizing with Claude…",
+};
+
+const $ = (id) => document.getElementById(id);
+let currentResult = null;
+
+function fmtTime(sec) {
+  sec = Math.floor(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+const EFFORT_LABEL = { low: "low", medium: "medium", high: "high", xhigh: "extra high", max: "max" };
+
+// "claude-opus-5-5" → "Opus 5.5"
+function prettyModel(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || "");
+  if (!m) return id || "Claude";
+  return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}`;
+}
+
+function esc(str) {
+  const d = document.createElement("div");
+  d.textContent = str ?? "";
+  return d.innerHTML;
+}
+
+function setStatus(text, { error = false, busy = false } = {}) {
+  $("status").className = error ? "error" : "";
+  $("status").innerHTML = (busy ? '<span class="spinner"></span>' : "") + esc(text);
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("submit").disabled = true;
+  $("result").innerHTML = "";
+  setStatus(STATUS_TEXT.queued, { busy: true });
+  try {
+    const res = await fetch("/api/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: $("url").value,
+        language: $("language").value,
+        model: $("model").value,
+        effort: $("effort").value,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || "Request failed.");
+    await poll(body);
+  } catch (err) {
+    // fetch() throws TypeError when the server can't be reached at all.
+    const message = err instanceof TypeError
+      ? "The summarizer server isn't running (it stops after 30 idle minutes). Click the extension button to start it again."
+      : err.message;
+    setStatus(message, { error: true });
+  } finally {
+    $("submit").disabled = false;
+  }
+});
+
+// Remember the chosen language, model and effort between visits.
+for (const id of ["language", "model", "effort"]) {
+  try {
+    const saved = localStorage.getItem(id);
+    if (saved && [...$(id).options].some((o) => o.value === saved)) $(id).value = saved;
+  } catch {}
+  $(id).addEventListener("change", () => {
+    try { localStorage.setItem(id, $(id).value); } catch {}
+  });
+}
+
+// Opened from the Chrome extension as /?url=<video>: start right away.
+const startUrl = new URLSearchParams(location.search).get("url");
+if (startUrl) {
+  $("url").value = startUrl;
+  $("form").requestSubmit();
+}
+
+async function poll(job) {
+  while (true) {
+    if (job.status === "done") { setStatus(""); render(job.result); return; }
+    if (job.status === "error") throw new Error(job.error);
+    setStatus(STATUS_TEXT[job.status] || job.status, { busy: true });
+    await new Promise((r) => setTimeout(r, 1500));
+    const res = await fetch(`/api/jobs/${job.id}`);
+    if (!res.ok) throw new Error("Lost track of the job — the server may have restarted.");
+    job = await res.json();
+  }
+}
+
+function render(r) {
+  currentResult = r;
+  const v = r.video, s = r.summary;
+  const link = (t) => `https://www.youtube.com/watch?v=${v.id}&t=${t}s`;
+  const meta = [v.channel, v.duration ? fmtTime(v.duration) : null,
+                r.transcript_source === "whisper" ? "transcribed from audio" : "from captions",
+                `${prettyModel(r.model)}, ${EFFORT_LABEL[r.effort] || r.effort} effort`]
+               .filter(Boolean).map(esc).join(" · ");
+
+  $("result").innerHTML = `
+    <div class="card video">
+      ${v.thumbnail ? `<img src="${esc(v.thumbnail)}" alt="">` : ""}
+      <div>
+        <h2><a href="${link(0)}" target="_blank" rel="noopener">${esc(v.title)}</a></h2>
+        <div class="meta">${meta}</div>
+      </div>
+    </div>
+    <div class="card"><h3>TL;DR</h3><div>${esc(s.tldr)}</div></div>
+    <div class="card"><h3>Key points</h3><ul>${s.key_points.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>
+    <div class="card"><h3>Chapters</h3>
+      ${s.chapters.map((c) => `
+        <div class="chapter">
+          <a class="ts" href="${link(c.start_seconds)}" target="_blank" rel="noopener">${fmtTime(c.start_seconds)}</a>
+          <div><strong>${esc(c.title)}</strong><p>${esc(c.summary)}</p></div>
+        </div>`).join("")}
+    </div>
+    <div class="actions"><button id="copy" type="button">Copy as Markdown</button></div>`;
+  $("copy").addEventListener("click", copyMarkdown);
+}
+
+async function copyMarkdown() {
+  const r = currentResult, v = r.video, s = r.summary;
+  const url = `https://www.youtube.com/watch?v=${v.id}`;
+  const md = [
+    `# [${v.title}](${url})`, "",
+    "## TL;DR", s.tldr, "",
+    "## Key points", ...s.key_points.map((p) => `- ${p}`), "",
+    "## Chapters",
+    ...s.chapters.map((c) => `- [${fmtTime(c.start_seconds)}](${url}&t=${c.start_seconds}s) **${c.title}** — ${c.summary}`),
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(md);
+    $("copy").textContent = "Copied!";
+  } catch {
+    $("copy").textContent = "Copy failed";
+  }
+  setTimeout(() => { $("copy").textContent = "Copy as Markdown"; }, 1500);
+}
+</script>
+</body>
+</html>
