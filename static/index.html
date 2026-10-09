@@ -174,7 +174,7 @@ $("form").addEventListener("submit", async (e) => {
   } catch (err) {
     // fetch() throws TypeError when the server can't be reached at all.
     const message = err instanceof TypeError
-      ? "The summarizer server isn't running (it stops after 30 idle minutes). Click the extension button to start it again."
+      ? "The summarizer server isn't running (it stops after 10 idle minutes). Click the extension button to start it again."
       : err.message;
     setStatus(message, { error: true });
   } finally {

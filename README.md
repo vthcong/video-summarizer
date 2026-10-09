@@ -10,7 +10,7 @@ Everything runs on your own computer. Summaries are written by Claude through [C
 
 ## Features
 
-- **One-click Chrome button.** It starts the local server only when you need it. The server shuts itself down after 30 idle minutes.
+- **One-click Chrome button.** It starts the local server only when you need it. The server shuts itself down after 10 idle minutes.
 - **Works without captions.** It uses YouTube's captions when they exist. When they don't, it downloads the audio and transcribes it on your machine with [Whisper](https://github.com/openai/whisper).
 - **Any summary language.** Summarize an English video in Vietnamese, a Japanese video in English, and so on.
 - **Your choice of model and effort.** Pick Opus, Sonnet or Haiku, and how hard Claude should think, right on the page.
@@ -132,7 +132,7 @@ WHISPER_MODEL=base
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `WHISPER_MODEL` | `small` | Speech-to-text model for videos without captions: `tiny`, `base`, `small`, `medium` or `large-v3`. Larger is more accurate but slower. The model downloads on first use (`small` is ~500 MB). |
-| `IDLE_SHUTDOWN_MINUTES` | `0` (never) | Shuts the server down after this many idle minutes. The Chrome launcher sets it to 30; change `IDLE_SHUTDOWN_MINUTES` in `launcher/native_host.py`. |
+| `IDLE_SHUTDOWN_MINUTES` | `0` (never) | Shuts the server down after this many idle minutes. A server you start by hand never stops by default. The Chrome launcher always sets it to 10; to change that, edit `IDLE_SHUTDOWN_MINUTES` in `launcher/native_host.py`. |
 
 ## Without the Chrome button
 
@@ -160,7 +160,7 @@ Then open http://localhost:8000. You can also bookmark a link like `http://local
 | The button stopped working after moving the project | Run `install.py` again; it records the project's location. |
 | Captions fail or YouTube blocks requests | YouTube changes often. Update the downloaders: `uv lock --upgrade-package yt-dlp --upgrade-package youtube-transcript-api && uv sync`. |
 | The first video without captions takes very long | The Whisper model is downloading (once). For faster transcription, set `WHISPER_MODEL=base`. |
-| "The summarizer server isn't running" on an old tab | The server stopped after 30 idle minutes. Click the extension button again. |
+| "The summarizer server isn't running" on an old tab | The server stopped after 10 idle minutes. Click the extension button again. |
 
 ## Uninstall
 

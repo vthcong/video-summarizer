@@ -21,7 +21,7 @@ PROJECT = Path(__file__).resolve().parent.parent
 PORT = 8000
 HEALTH_URL = f"http://127.0.0.1:{PORT}/api/health"
 PAGE_URL = f"http://localhost:{PORT}/"
-IDLE_SHUTDOWN_MINUTES = 30  # the server stops itself after this long without use
+IDLE_SHUTDOWN_MINUTES = 10 # the server stops itself after this long without use
 STARTUP_TIMEOUT = 30  # seconds
 
 
