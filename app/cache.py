@@ -16,13 +16,13 @@ def load(video_id: str, language: str, model: str, effort: str) -> Result | None
     if not path.exists():
         return None
     try:
-        return Result.model_validate_json(path.read_text())
+        return Result.model_validate_json(path.read_text(encoding="utf-8"))
     except ValueError:
         return None  # stale or corrupt entry; regenerate
 
 
 def save(result: Result, model: str) -> None:
-    """`model` is the alias that was requested ("opus"), so later lookups by alias find it."""
+    """`model` is the cache key for what was requested ("opus"), so later lookups find it."""
     CACHE_DIR.mkdir(exist_ok=True)
     path = _path(result.video.id, result.language, model, result.effort)
-    path.write_text(result.model_dump_json(indent=2))
+    path.write_text(result.model_dump_json(indent=2), encoding="utf-8")

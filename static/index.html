@@ -26,6 +26,7 @@
   form { display: grid; gap: 12px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; }
   .options { display: flex; gap: 12px; flex-wrap: wrap; }
+  [hidden] { display: none !important; }
   .options label { display: grid; gap: 4px; flex: 1 1 150px; font-size: .8rem; color: var(--muted); }
   .hint { margin: -4px 0 0; font-size: .8rem; color: var(--muted); }
   input, select, button {
@@ -89,7 +90,7 @@
           <option>Chinese</option>
         </select>
       </label>
-      <label>Model
+      <label id="model-field">Model
         <select id="model">
           <option value="opus">Opus — most thorough</option>
           <option value="sonnet" selected>Sonnet — balanced</option>
@@ -102,11 +103,11 @@
           <option value="medium">Medium</option>
           <option value="high" selected>High</option>
           <option value="xhigh">Extra high</option>
-          <option value="max">Max</option>
+          <option value="max" id="effort-max">Max</option>
         </select>
       </label>
     </div>
-    <p class="hint">Higher effort and larger models give more thorough summaries but take longer and use more of your Claude plan.</p>
+    <p class="hint" id="hint">Higher effort and larger models give more thorough summaries but take longer and use more of your Claude plan.</p>
   </form>
 
   <div id="status"></div>
@@ -119,7 +120,7 @@ const STATUS_TEXT = {
   fetching_transcript: "Fetching captions…",
   downloading_audio: "No captions found — downloading audio…",
   transcribing: "Transcribing audio (this can take a few minutes for long videos)…",
-  summarizing: "Summarizing with Claude…",
+  summarizing: "Summarizing with Claude…",  // "Codex" when that backend is active
 };
 
 const $ = (id) => document.getElementById(id);
@@ -134,8 +135,10 @@ function fmtTime(sec) {
 
 const EFFORT_LABEL = { low: "low", medium: "medium", high: "high", xhigh: "extra high", max: "max" };
 
-// "claude-opus-5-5" → "Opus 5.5"
+// "claude-opus-5-5" → "Opus 5.5", "gpt-5.5" → "GPT-5.5", "codex" → "Codex"
 function prettyModel(id) {
+  if (id === "codex") return "Codex";
+  if (/^gpt-/.test(id || "")) return "GPT" + id.slice(3);
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || "");
   if (!m) return id || "Claude";
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}`;
@@ -193,12 +196,27 @@ for (const id of ["language", "model", "effort"]) {
   });
 }
 
+// Codex uses its own configured model and has no "max" effort, so adapt the controls.
+async function applyBackend() {
+  try {
+    const { backend } = await (await fetch("/api/health")).json();
+    if (backend !== "codex") return;
+    $("model-field").hidden = true;
+    $("effort-max").hidden = true;
+    if ($("effort").value === "max") $("effort").value = "xhigh";
+    STATUS_TEXT.summarizing = "Summarizing with Codex…";
+    $("hint").textContent = "Higher effort gives more thorough summaries but takes longer and uses more of your ChatGPT plan.";
+  } catch {}
+}
+
 // Opened from the Chrome extension as /?url=<video>: start right away.
 const startUrl = new URLSearchParams(location.search).get("url");
-if (startUrl) {
-  $("url").value = startUrl;
-  $("form").requestSubmit();
-}
+applyBackend().then(() => {
+  if (startUrl) {
+    $("url").value = startUrl;
+    $("form").requestSubmit();
+  }
+});
 
 async function poll(job) {
   while (true) {

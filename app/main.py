@@ -17,7 +17,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from . import cache  # noqa: E402
 from .models import Effort, Job, ModelChoice, Result  # noqa: E402
-from .summarizer import SummaryError, summarize  # noqa: E402
+from .summarizer import SummaryError, cache_model_key, get_backend, summarize  # noqa: E402
 from .transcript import get_transcript  # noqa: E402
 from .youtube import VideoUnavailableError, fetch_metadata, parse_video_id  # noqa: E402
 
@@ -38,7 +38,12 @@ def _idle_watchdog() -> None:
         busy = any(job.status not in ("done", "error") for job in jobs.values())
         if not busy and time.monotonic() - last_activity > idle_limit:
             log.info("No activity for %g minutes; shutting down.", IDLE_SHUTDOWN_MINUTES)
-            os.kill(os.getpid(), signal.SIGTERM)  # uvicorn handles this as a graceful shutdown
+            # uvicorn handles SIGTERM as a graceful shutdown. On Windows os.kill() would
+            # terminate the process outright, so deliver the signal to our own handler instead.
+            if os.name == "nt":
+                signal.raise_signal(signal.SIGTERM)
+            else:
+                os.kill(os.getpid(), signal.SIGTERM)
             return
 
 
@@ -73,8 +78,9 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    # The Chrome launcher checks this to tell our server apart from anything else on the port.
-    return {"app": "video-summarizer"}
+    # The Chrome launcher checks "app" to tell our server apart from anything else on the port.
+    # The page reads "backend" to adapt its model picker.
+    return {"app": "video-summarizer", "backend": get_backend()}
 
 
 @app.post("/api/summarize")
@@ -85,7 +91,7 @@ def start_summary(req: SummarizeRequest, background: BackgroundTasks) -> Job:
     language = req.language.strip() or "English"
 
     job = Job(id=uuid.uuid4().hex)
-    if cached := cache.load(video_id, language, req.model, req.effort):
+    if cached := cache.load(video_id, language, cache_model_key(req.model), req.effort):
         job.status, job.result = "done", cached
     else:
         background.add_task(_run_job, job, video_id, language, req.model, req.effort)
@@ -113,7 +119,7 @@ def _run_job(job: Job, video_id: str, language: str, model: ModelChoice, effort:
             video=video, summary=summary, transcript_source=source,
             language=language, model=model_id, effort=effort,
         )
-        cache.save(result, model)
+        cache.save(result, cache_model_key(model))
         job.result = result
         job.status = "done"
     except (VideoUnavailableError, SummaryError) as e:

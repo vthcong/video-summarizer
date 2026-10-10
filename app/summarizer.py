@@ -1,8 +1,10 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 import anthropic
 
@@ -14,8 +16,11 @@ API_MODELS: dict[str, str] = {
     "sonnet": "claude-sonnet-5-5",
     "haiku": "claude-haiku-5-5",
 }
+# Codex has no "max" effort; its highest level is "xhigh".
+CODEX_EFFORTS: dict[str, str] = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "xhigh"}
+BACKENDS = ("claude-code", "codex", "api")
 BLOCK_SECONDS = 30
-CLAUDE_CODE_TIMEOUT = 600  # seconds
+CLI_TIMEOUT = 600  # seconds
 
 SYSTEM_PROMPT = """You summarize YouTube videos from their transcripts.
 
@@ -43,6 +48,28 @@ def _get_client() -> anthropic.Anthropic:
     if _client is None:
         _client = anthropic.Anthropic()
     return _client
+
+
+def get_backend() -> str:
+    """SUMMARIZER_BACKEND if set, otherwise whichever CLI is installed (Claude Code first)."""
+    if backend := os.getenv("SUMMARIZER_BACKEND"):
+        return backend
+    if not _find_cli("CLAUDE_BIN", "claude") and _find_cli("CODEX_BIN", "codex"):
+        return "codex"
+    return "claude-code"
+
+
+def cache_model_key(model: ModelChoice) -> str:
+    """The part of the cache file name that identifies who writes the summary."""
+    if get_backend() != "codex":
+        return model  # the alias that was requested ("opus")
+    # Codex ignores the Claude model picker; it uses CODEX_MODEL or its own configured default.
+    return "codex-" + re.sub(r"[^A-Za-z0-9_-]", "_", os.getenv("CODEX_MODEL", "default"))
+
+
+def _find_cli(env_var: str, name: str) -> str | None:
+    # shutil.which also finds Windows launchers such as codex.cmd via PATHEXT.
+    return os.getenv(env_var) or shutil.which(name)
 
 
 def format_timestamp(seconds: float) -> str:
@@ -87,49 +114,62 @@ def summarize(
         + language_instruction
     )
 
-    backend = os.getenv("SUMMARIZER_BACKEND", "claude-code")
+    backend = get_backend()
     if backend == "claude-code":
         return _summarize_with_claude_code(user_content, model, effort)
+    if backend == "codex":
+        return _summarize_with_codex(user_content, effort)
     if backend == "api":
         return _summarize_with_api(user_content, model, effort)
-    raise SummaryError(f"Unknown SUMMARIZER_BACKEND {backend!r}; use 'claude-code' or 'api'.")
+    raise SummaryError(f"Unknown SUMMARIZER_BACKEND {backend!r}; use one of: {', '.join(BACKENDS)}.")
+
+
+def _run_cli(
+    name: str, cmd: list[str], stdin: str, cwd: str, hidden_env: tuple[str, ...]
+) -> subprocess.CompletedProcess:
+    # An API key in the environment (e.g. from .env) would make the CLI bill the API
+    # instead of using the subscription login, so hide it from the subprocess.
+    env = {k: v for k, v in os.environ.items() if k not in hidden_env}
+    try:
+        # Explicit UTF-8: Windows would otherwise use the locale's code page and mangle
+        # non-English transcripts and summaries.
+        return subprocess.run(
+            cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=CLI_TIMEOUT, cwd=cwd, env=env,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise SummaryError(f"{name} took too long to respond. Try again.") from e
 
 
 def _summarize_with_claude_code(user_content: str, model: ModelChoice, effort: Effort) -> tuple[Summary, str]:
     """Run Claude Code headless (`claude -p`), which uses your Claude subscription's usage limits."""
-    claude_bin = os.getenv("CLAUDE_BIN") or shutil.which("claude")
+    claude_bin = _find_cli("CLAUDE_BIN", "claude")
     if not claude_bin:
         raise SummaryError(
             "Claude Code CLI not found. Install it (https://claude.com/claude-code) "
             "or set CLAUDE_BIN to its path."
         )
 
-    cmd = [
-        claude_bin, "-p",
-        "--output-format", "json",
-        "--model", model,
-        "--effort", effort,
-        # Replace Claude Code's large default system prompt and turn off tools, settings
-        # and MCP servers: this is a single text-in, JSON-out call.
-        "--system-prompt", SYSTEM_PROMPT,
-        "--tools", "",
-        "--setting-sources", "",
-        "--strict-mcp-config",
-        "--no-session-persistence",
-        "--json-schema", json.dumps(Summary.model_json_schema()),
-    ]
-    # An API key in the environment (e.g. from .env) would make the CLI bill the API
-    # instead of using the subscription login, so hide it from the subprocess.
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
-
-    try:
-        with tempfile.TemporaryDirectory(prefix="summarizer-") as cwd:
-            proc = subprocess.run(
-                cmd, input=user_content, capture_output=True, text=True,
-                timeout=CLAUDE_CODE_TIMEOUT, cwd=cwd, env=env,
-            )
-    except subprocess.TimeoutExpired as e:
-        raise SummaryError("Claude Code took too long to respond. Try again.") from e
+    with tempfile.TemporaryDirectory(prefix="summarizer-", ignore_cleanup_errors=True) as cwd:
+        # The system prompt goes in a file: a multi-line argument would be cut short when
+        # Windows runs an npm-installed claude.cmd through cmd.exe.
+        prompt_file = Path(cwd) / "system-prompt.txt"
+        prompt_file.write_text(SYSTEM_PROMPT, encoding="utf-8")
+        cmd = [
+            claude_bin, "-p",
+            "--output-format", "json",
+            "--model", model,
+            "--effort", effort,
+            # Replace Claude Code's large default system prompt and turn off tools, settings
+            # and MCP servers: this is a single text-in, JSON-out call.
+            "--system-prompt-file", str(prompt_file),
+            "--tools", "",
+            "--setting-sources", "",
+            "--strict-mcp-config",
+            "--no-session-persistence",
+            "--json-schema", json.dumps(Summary.model_json_schema()),
+        ]
+        proc = _run_cli("Claude Code", cmd, user_content, cwd, ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
 
     try:
         output = json.loads(proc.stdout)
@@ -148,6 +188,50 @@ def _summarize_with_claude_code(user_content: str, model: ModelChoice, effort: E
     # modelUsage is keyed by the exact model IDs that ran, e.g. {"claude-opus-5-5": {...}}.
     model_id = next(iter(output.get("modelUsage") or {}), model)
     return Summary.model_validate(structured), model_id
+
+
+def _summarize_with_codex(user_content: str, effort: Effort) -> tuple[Summary, str]:
+    """Run Codex headless (`codex exec`), which uses your ChatGPT plan's usage limits."""
+    codex_bin = _find_cli("CODEX_BIN", "codex")
+    if not codex_bin:
+        raise SummaryError(
+            "Codex CLI not found. Install it (npm install -g @openai/codex) or set CODEX_BIN to its path."
+        )
+    model = os.getenv("CODEX_MODEL")
+
+    with tempfile.TemporaryDirectory(prefix="summarizer-", ignore_cleanup_errors=True) as cwd:
+        schema_file, output_file = Path(cwd) / "schema.json", Path(cwd) / "summary.json"
+        schema_file.write_text(json.dumps(Summary.model_json_schema()), encoding="utf-8")
+        cmd = [
+            codex_bin, "exec",
+            "--skip-git-repo-check",  # cwd is an empty temp folder, not a repo
+            "--sandbox", "read-only",
+            "--ephemeral",
+            "--color", "never",
+            "-c", f"model_reasoning_effort={CODEX_EFFORTS[effort]}",
+            "--output-schema", str(schema_file),
+            "--output-last-message", str(output_file),
+            *(["--model", model] if model else []),
+            "-",  # read the prompt from stdin
+        ]
+        # Codex has no option to replace its system prompt, so ours leads the message.
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\nDo not run commands or read files: everything you need is below. "
+            f"Reply only with the summary.\n\n{user_content}"
+        )
+        proc = _run_cli("Codex", cmd, prompt, cwd, ("OPENAI_API_KEY", "CODEX_API_KEY"))
+        output = output_file.read_text(encoding="utf-8").strip() if output_file.exists() else ""
+
+    if proc.returncode != 0 or not output:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        raise SummaryError(
+            f"Codex failed (exit {proc.returncode}): {detail[-1] if detail else 'no output'}. "
+            "If you're not logged in, run `codex login` in a terminal."
+        )
+    try:
+        return Summary.model_validate_json(output), model or "codex"
+    except ValueError as e:
+        raise SummaryError("Codex returned a summary in an unexpected format. Try again.") from e
 
 
 def _summarize_with_api(user_content: str, model: ModelChoice, effort: Effort) -> tuple[Summary, str]:

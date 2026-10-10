@@ -23,6 +23,7 @@ HEALTH_URL = f"http://127.0.0.1:{PORT}/api/health"
 PAGE_URL = f"http://localhost:{PORT}/"
 IDLE_SHUTDOWN_MINUTES = 10 # the server stops itself after this long without use
 STARTUP_TIMEOUT = 30  # seconds
+WINDOWS = sys.platform == "win32"
 
 
 def read_message() -> dict | None:
@@ -52,26 +53,35 @@ def server_state() -> str:
 
 def start_server() -> None:
     env = os.environ.copy()
-    # Chrome starts us with a minimal PATH; the summarizer needs to find the `claude` CLI.
-    extra = [str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
-    env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "/usr/bin:/bin")])
-    # The `claude` CLI needs these to read its saved login from the macOS Keychain.
-    env.setdefault("USER", getpass.getuser())
-    env.setdefault("TMPDIR", tempfile.gettempdir())
+    # Chrome may start us with a minimal PATH; the summarizer needs to find the `claude`
+    # or `codex` CLI. These are their usual install folders (native installer, Homebrew, npm).
+    if WINDOWS:
+        extra = [str(Path.home() / ".local/bin"), os.path.expandvars(r"%APPDATA%\npm")]
+    else:
+        extra = [str(Path.home() / ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
+        # The `claude` CLI needs these to read its saved login from the macOS Keychain.
+        env.setdefault("USER", getpass.getuser())
+        env.setdefault("TMPDIR", tempfile.gettempdir())
+    env["PATH"] = os.pathsep.join(extra + [env.get("PATH", os.defpath)])
     env["IDLE_SHUTDOWN_MINUTES"] = str(IDLE_SHUTDOWN_MINUTES)
 
     log_dir = PROJECT / "logs"
     log_dir.mkdir(exist_ok=True)
+    cmd = [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PORT)]
     with open(log_dir / "server.log", "w") as log:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(PORT)],
-            cwd=PROJECT,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,  # keep running after Chrome closes this host process
-        )
+        opts = dict(cwd=PROJECT, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+        if not WINDOWS:
+            # Keep running after Chrome closes this host process.
+            proc = subprocess.Popen(cmd, start_new_session=True, **opts)
+        else:
+            # No console window, but one the server's own child processes (claude, codex)
+            # inherit instead of each opening a window of their own.
+            flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+            try:
+                # Leave Chrome's job object so the server outlives this host process.
+                proc = subprocess.Popen(cmd, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **opts)
+            except OSError:
+                proc = subprocess.Popen(cmd, creationflags=flags, **opts)  # the job forbids breaking away
 
     deadline = time.monotonic() + STARTUP_TIMEOUT
     while time.monotonic() < deadline:

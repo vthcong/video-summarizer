@@ -1,5 +1,6 @@
 import pytest
 
+from app import summarizer
 from app.models import Segment
 from app.summarizer import format_timestamp, format_transcript
 from app.youtube import parse_video_id
@@ -52,3 +53,29 @@ def test_format_timestamp():
 def test_format_transcript_merges_into_blocks():
     segments = [Segment(start=t, text=f"s{t}") for t in (0, 10, 20, 31, 45, 70)]
     assert format_transcript(segments) == "[00:00] s0 s10 s20\n[00:31] s31 s45\n[01:10] s70"
+
+
+def test_backend_prefers_claude_code_then_codex(monkeypatch):
+    monkeypatch.delenv("SUMMARIZER_BACKEND", raising=False)
+    monkeypatch.delenv("CLAUDE_BIN", raising=False)
+    monkeypatch.delenv("CODEX_BIN", raising=False)
+    installed = set()
+    monkeypatch.setattr(summarizer.shutil, "which", lambda name: name if name in installed else None)
+
+    assert summarizer.get_backend() == "claude-code"  # nothing installed: report Claude Code missing
+    installed.add("codex")
+    assert summarizer.get_backend() == "codex"
+    installed.add("claude")
+    assert summarizer.get_backend() == "claude-code"
+    monkeypatch.setenv("SUMMARIZER_BACKEND", "codex")
+    assert summarizer.get_backend() == "codex"
+
+
+def test_cache_model_key(monkeypatch):
+    monkeypatch.setenv("SUMMARIZER_BACKEND", "claude-code")
+    assert summarizer.cache_model_key("opus") == "opus"
+    monkeypatch.setenv("SUMMARIZER_BACKEND", "codex")
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    assert summarizer.cache_model_key("opus") == "codex-default"
+    monkeypatch.setenv("CODEX_MODEL", "gpt-5.5")
+    assert summarizer.cache_model_key("opus") == "codex-gpt-5_5"
